@@ -38,7 +38,7 @@
 
         .form-group { margin-bottom: 20px; }
         .form-group label { display: block; font-size: 14px; font-weight: 600; margin-bottom: 8px; }
-        .form-group input, .form-group textarea {
+        .form-group input, .form-group select, .form-group textarea {
             width: 100%; padding: 12px; border: 1px solid var(--border);
             border-radius: 10px; font-size: 15px; background: #fcfdfe;
         }
@@ -70,7 +70,7 @@
         <p class="owner">Admin: Baldevsinh</p>
         <nav class="nav-menu">
             <a href="admin_dashboard.html" class="nav-link"><span>Dashboard Summary</span></a>
-            <a href="admin_register.html" class="nav-link active"><span>Register Customer</span></a>
+            <a href="admin_register.html" class="nav-link active"><span>Register User</span></a>
             <a href="admin_users.html" class="nav-link"><span>Manage Customers</span></a>
             <a href="admin_loans.html" class="nav-link"><span>Loan Management</span></a>
         </nav>
@@ -82,15 +82,23 @@
 
     <main class="main-content">
         <div class="header">
-            <h1>Register New Customer</h1>
-            <p style="color: var(--secondary);">Create a profile and login credentials for a new borrower.</p>
+            <h1 id="pageTitle">Register Account</h1>
+            <p id="pageSubtitle" style="color: var(--secondary);">Create profile and login credentials for an administrator or customer.</p>
         </div>
 
         <div class="card">
             <form id="registerForm">
                 <div class="form-group">
+                    <label>Account Role</label>
+                    <select id="regRole">
+                        <option value="admin">Administrator (Admin Terminal &amp; Dashboard Access)</option>
+                        <option value="user">Customer (Borrower Only)</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
                     <label>Full Name</label>
-                    <input type="text" id="regName" placeholder="Enter customer's full name" required>
+                    <input type="text" id="regName" placeholder="Enter full name" required>
                 </div>
 
                 <div class="form-group">
@@ -107,7 +115,7 @@
 
                 <div class="form-group">
                     <label>Login Email</label>
-                    <input type="email" id="regEmail" placeholder="customer@email.com" required>
+                    <input type="email" id="regEmail" placeholder="admin@gayatri.com" required>
                 </div>
 
                 <div class="form-group">
@@ -117,8 +125,8 @@
 
                 <button type="submit" class="btn-submit" id="regBtn">Create Account</button>
                 
-                <div class="info-note">
-                    <strong>Note:</strong> This will create a Firebase Authentication account and a user profile in the database.
+                <div class="info-note" id="roleInfoNote">
+                    <strong>Note:</strong> Administrator accounts create an <code>admins/{uid}</code> document with full administrator privileges.
                 </div>
             </form>
         </div>

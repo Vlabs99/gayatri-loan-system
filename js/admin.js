@@ -8,6 +8,7 @@ import {
 import {
   collection,
   addDoc,
+  setDoc,
   doc,
   getDoc,
   getDocs,
@@ -338,6 +339,19 @@ onAuthStateChanged(auth, async (user) => {
         const userSnap = await getDoc(doc(db, "users", user.uid));
         if (userSnap.exists() && userSnap.data()?.role === "admin") {
           isAdmin = true;
+          // Auto-sync missing admins/{uid} document for this verified admin
+          try {
+            const uData = userSnap.data();
+            await setDoc(doc(db, "admins", user.uid), {
+              uid: user.uid,
+              email: user.email || uData.email || "",
+              role: "admin",
+              name: uData.name || "",
+              createdAt: serverTimestamp()
+            }, { merge: true });
+          } catch (syncErr) {
+            console.warn("Could not sync admins document:", syncErr.message);
+          }
         }
       } catch (checkErr) {
         console.warn("Could not check 'users' collection role:", checkErr.message);
@@ -445,7 +459,7 @@ window.createLoan = async function () {
 
 /* ================= NAVIGATION & ACTIONS ================= */
 window.toggleAdminCreate = function () {
-  window.location.href = "admin_register.html";
+  window.location.href = "admin_register.html?role=admin";
 };
 
 window.logout = async function () {

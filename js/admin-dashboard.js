@@ -1,5 +1,5 @@
 import { auth, db } from "./firebase-config.js";
-import { collection, getDocs, query, orderBy, limit, doc, getDoc } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+import { collection, getDocs, query, orderBy, limit, doc, getDoc, setDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
 
 async function loadDashboardData() {
@@ -74,9 +74,49 @@ async function loadDashboardData() {
 // Authentication & Admin Check
 onAuthStateChanged(auth, async (user) => {
     if (user) {
-        const adminSnap = await getDoc(doc(db, "admins", user.uid));
-        if (adminSnap.exists()) loadDashboardData();
-        else window.location.replace("admin-login.html");
+        let isAdmin = false;
+
+        // Primary check: Verify signed-in user's Firebase UID against admins/{uid} document ID
+        try {
+            const adminSnap = await getDoc(doc(db, "admins", user.uid));
+            if (adminSnap.exists()) {
+                isAdmin = true;
+            }
+        } catch (checkErr) {
+            console.warn("Could not check 'admins' collection:", checkErr.message);
+        }
+
+        // Secondary fallback: Check 'users' collection for role == 'admin'
+        if (!isAdmin) {
+            try {
+                const userSnap = await getDoc(doc(db, "users", user.uid));
+                if (userSnap.exists() && userSnap.data()?.role === "admin") {
+                    isAdmin = true;
+                    // Auto-sync missing admins/{uid} document for this verified admin
+                    try {
+                        const uData = userSnap.data();
+                        await setDoc(doc(db, "admins", user.uid), {
+                            uid: user.uid,
+                            email: user.email || uData.email || "",
+                            role: "admin",
+                            name: uData.name || "",
+                            createdAt: serverTimestamp()
+                        }, { merge: true });
+                    } catch (syncErr) {
+                        console.warn("Could not sync admins document:", syncErr.message);
+                    }
+                }
+            } catch (checkErr) {
+                console.warn("Could not check 'users' collection role:", checkErr.message);
+            }
+        }
+
+        if (isAdmin) {
+            loadDashboardData();
+        } else {
+            await signOut(auth);
+            window.location.replace("admin-login.html");
+        }
     } else {
         window.location.replace("admin-login.html");
     }
@@ -88,5 +128,5 @@ document.getElementById("logoutBtn")?.addEventListener("click", () => {
 
 // Admin creation action
 window.toggleAdminCreate = function () {
-    window.location.href = "admin_register.html";
+    window.location.href = "admin_register.html?role=admin";
 };
