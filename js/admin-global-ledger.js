@@ -2,64 +2,57 @@ import { auth, db } from "./firebase-config.js";
 import { collection, getDocs, query, orderBy, doc, getDoc } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
 
-const ledgerTableBody = document.getElementById("globalLedgerBody");
-
-/**
- * Fetches all transactions and maps User IDs to User Names
- */
-async function loadGlobalLedger() {
+async function loadFullHistory() {
+    const tableBody = document.getElementById("globalLedgerBody");
+    
     try {
-        // 1. Get all ledger entries (Newest First)
-        const ledgerQuery = query(collection(db, "ledger"), orderBy("date", "desc"));
-        const ledgerSnap = await getDocs(ledgerQuery);
+        // Query ALL payments across ALL users, ordered by newest first
+        const q = query(collection(db, "ledger"), orderBy("date", "desc"));
+        const snapshot = await getDocs(q);
 
-        if (ledgerSnap.empty) {
-            ledgerTableBody.innerHTML = `<tr><td colspan="4" style="text-align:center; padding:40px;">No transactions found.</td></tr>`;
+        if (snapshot.empty) {
+            tableBody.innerHTML = "<tr><td colspan='4' style='text-align:center;'>No payments found.</td></tr>";
             return;
         }
 
-        ledgerTableBody.innerHTML = "";
+        tableBody.innerHTML = "";
+        const nameCache = {}; // To avoid asking Firebase for the same name twice
 
-        // Use a Map to cache user names (prevents redundant database hits)
-        const userCache = new Map();
-
-        for (const ledgerDoc of ledgerSnap.docs) {
+        for (const ledgerDoc of snapshot.docs) {
             const data = ledgerDoc.data();
             const uId = data.userId;
 
-            // 2. Resolve Name
-            let userName = "Unknown User";
-            if (userCache.has(uId)) {
-                userName = userCache.get(uId);
-            } else {
-                const userSnap = await getDoc(doc(db, "users", uId));
-                if (userSnap.exists()) {
-                    userName = userSnap.data().name;
-                    userCache.set(uId, userName);
-                }
+            // Get the User's Name
+            if (!nameCache[uId]) {
+                const uSnap = await getDoc(doc(db, "users", uId));
+                nameCache[uId] = uSnap.exists() ? uSnap.data().name : "Unknown User";
             }
 
-            // 3. Render Row
-            const row = document.createElement("tr");
-            const formattedDate = data.date ? new Date(data.date.toDate()).toLocaleDateString('en-IN') : "N/A";
-            
-            row.innerHTML = `
-                <td>${formattedDate}</td>
-                <td><strong>${userName}</strong></td>
-                <td>${data.note || '-'}</td>
-                <td class="amount-cell">₹${Number(data.amount).toLocaleString('en-IN')}</td>
-            `;
-            ledgerTableBody.appendChild(row);
-        }
+            // --- DETAILED DATE & TIME ---
+            let dateTimeDisplay = "N/A";
+            if (data.date) {
+                const dateObj = typeof data.date.toDate === 'function' ? data.date.toDate() : new Date(data.date);
+                dateTimeDisplay = dateObj.toLocaleString('en-IN', {
+                    day: '2-digit', month: '2-digit', year: 'numeric',
+                    hour: '2-digit', minute: '2-digit', hour12: true
+                });
+            }
 
-    } catch (error) {
-        console.error("Ledger Error:", error);
-        ledgerTableBody.innerHTML = `<tr><td colspan="4" style="text-align:center; color:red;">Error loading history: ${error.message}</td></tr>`;
+            tableBody.innerHTML += `
+                <tr>
+                    <td class="timestamp">${dateTimeDisplay}</td>
+                    <td><strong>${nameCache[uId]}</strong></td>
+                    <td style="color: #64748b;">${data.note || 'Payment'}</td>
+                    <td class="amt">₹${Number(data.amount).toLocaleString('en-IN')}</td>
+                </tr>
+            `;
+        }
+    } catch (err) {
+        console.error("Ledger Error:", err);
     }
 }
 
-// Check Auth and Initialize
 onAuthStateChanged(auth, (user) => {
-    if (user) loadGlobalLedger();
+    if (user) loadFullHistory();
     else window.location.href = "index.html";
 });

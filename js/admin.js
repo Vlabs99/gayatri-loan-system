@@ -3,7 +3,7 @@ import { auth, db } from "./firebase-config.js";
 import {
   onAuthStateChanged,
   signOut
-} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+} from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
 
 import {
   collection,
@@ -11,214 +11,449 @@ import {
   doc,
   getDoc,
   getDocs,
-  query,
-  where,
-  updateDoc,
   serverTimestamp
-} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+} from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
-let currentLoanId = null;
+// Cache for customer details (UID -> User Object) and loans
+const cachedUsers = new Map();
+let cachedLoans = [];
 
 /* ================= HELPER: FORMAT CURRENCY ================= */
 const formatCurrency = (amount) => {
-    return new Intl.NumberFormat('en-IN', {
-        style: 'currency',
-        currency: 'INR',
-        maximumFractionDigits: 0
-    }).format(amount);
+  const num = Number(amount) || 0;
+  return new Intl.NumberFormat('en-IN', {
+    style: 'currency',
+    currency: 'INR',
+    maximumFractionDigits: 0
+  }).format(num);
 };
 
-/* ================= ADMIN AUTH ================= */
-onAuthStateChanged(auth, async (user) => {
-  if (!user) {
-    window.location = "admin-login.html";
-    return;
+/* ================= HELPER: ESCAPE HTML ================= */
+function escapeHtml(text) {
+  if (text === null || text === undefined) return "";
+  return String(text)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+/* ================= UI NOTIFICATIONS & BANNER ================= */
+function showErrorBanner(message) {
+  const banner = document.getElementById("adminErrorBanner");
+  if (banner) {
+    banner.style.display = "block";
+    banner.innerHTML = `<strong>Firestore Notice:</strong> ${escapeHtml(message)}`;
   }
-  const adminSnap = await getDoc(doc(db, "admins", user.uid));
-  if (!adminSnap.exists()) {
-    await signOut(auth);
-    window.location = "admin-login.html";
-    return;
+  console.error("Dashboard Error:", message);
+}
+
+function clearErrorBanner() {
+  const banner = document.getElementById("adminErrorBanner");
+  if (banner) {
+    banner.style.display = "none";
+    banner.innerHTML = "";
   }
+}
 
-  await loadUsers();
-  await loadDashboardSummary();
+/* ================= SET LOADING STATE ================= */
+function setLoadingState() {
+  const totalUsersEl = document.getElementById("totalUsers");
+  const activeLoansEl = document.getElementById("totalActiveLoans");
+  const outstandingEl = document.getElementById("totalOutstanding");
+  const closedLoansEl = document.getElementById("totalClosedLoans");
+  const createSelect = document.getElementById("userId");
+  const historyTable = document.getElementById("loanHistoryTable");
 
-  document.getElementById("historyUserSelect")?.addEventListener("change", loadUserLoans);
-});
+  if (totalUsersEl) totalUsersEl.innerText = "...";
+  if (activeLoansEl) activeLoansEl.innerText = "...";
+  if (outstandingEl) outstandingEl.innerText = "...";
+  if (closedLoansEl) closedLoansEl.innerText = "...";
 
-/* ================= LOAD USERS ================= */
+  if (createSelect) {
+    createSelect.innerHTML = `<option value="">Loading Users...</option>`;
+  }
+  if (historyTable) {
+    historyTable.innerHTML = `<tr><td colspan="4" style="text-align:center; padding:35px; color:var(--text-muted);">Loading records from Firestore...</td></tr>`;
+  }
+}
+
+/* ================= LOAD REGISTERED CUSTOMERS ================= */
 async function loadUsers() {
-  const usersSnapshot = await getDocs(collection(db, "users"));
   const createSelect = document.getElementById("userId");
   const historySelect = document.getElementById("historyUserSelect");
-
-  if (!createSelect || !historySelect) return;
-
-  createSelect.innerHTML = `<option value="">Choose User</option>`;
-  historySelect.innerHTML = `<option value="">Select User</option>`;
-
-  usersSnapshot.forEach(docSnap => {
-    const data = docSnap.data();
-    const opt = new Option(data.name || "No Name", docSnap.id);
-    createSelect.add(opt.cloneNode(true));
-    historySelect.add(opt);
-  });
-}
-
-/* ================= DASHBOARD SUMMARY ================= */
-async function loadDashboardSummary() {
-  const loansSnap = await getDocs(collection(db, "loans"));
-  const usersSnap = await getDocs(collection(db, "users"));
-
-  let active = 0, closed = 0, outstanding = 0;
-
-  loansSnap.forEach(docSnap => {
-    const loan = docSnap.data();
-    if (loan.status === "active") {
-      active++;
-      outstanding += loan.remainingAmount || 0;
-    } else {
-      closed++;
-    }
-  });
-
-  document.getElementById("totalUsers").innerText = usersSnap.size;
-  document.getElementById("totalActiveLoans").innerText = active;
-  document.getElementById("totalClosedLoans").innerText = closed;
-  document.getElementById("totalOutstanding").innerText = formatCurrency(outstanding);
-}
-
-/* ================= LOAD USER LOANS ================= */
-async function loadUserLoans() {
-  const userId = this.value;
-  const tbody = document.querySelector("#loanHistoryTable tbody");
-
-  if (!userId) {
-    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center">Select a user</td></tr>`;
-    return;
-  }
-
-  const q = query(collection(db, "loans"), where("userId", "==", userId));
-  const snap = await getDocs(q);
-
-  if (snap.empty) {
-    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center">No loans found</td></tr>`;
-    return;
-  }
-
-  let html = "";
-  snap.forEach(docSnap => {
-    const d = docSnap.data();
-    const loanId = docSnap.id;
-    const statusClass = d.status === 'active' ? 'status-active' : 'status-closed';
-
-    html += `
-      <tr class="fade-in">
-        <td style="font-family:monospace; font-size:12px;">#${loanId.slice(0,6)}</td>
-        <td>${formatCurrency(d.principal)}</td>
-        <td>${formatCurrency(d.totalWithInterest)}</td>
-        <td style="font-weight:600; color:var(--primary)">${formatCurrency(d.remainingAmount)}</td>
-        <td><span class="status-pill ${statusClass}">${d.status}</span></td>
-        <td>
-          <button class="btn-ghost" onclick="openLedgerModal('${loanId}')">📜 Ledger</button>
-          ${d.status === 'active' ? `<button class="btn-primary" style="width:auto; padding:5px 10px;" onclick="openPaymentModal('${loanId}')">💸 Pay</button>` : ''}
-        </td>
-      </tr>`;
-  });
-  tbody.innerHTML = html;
-}
-
-/* ================= LEDGER (FIXED) ================= */
-window.openLedgerModal = async function (loanId) {
-  const tbody = document.getElementById("ledgerTableBody");
-  document.getElementById("ledgerModal").style.display = "flex";
-  tbody.innerHTML = `<tr><td colspan="3" style="text-align:center">Loading Ledger...</td></tr>`;
+  const totalUsersEl = document.getElementById("totalUsers");
 
   try {
-    // Matches your screenshot fields: loanId, date, amount, type
-    const q = query(collection(db, "ledger"), where("loanId", "==", loanId));
-    const snap = await getDocs(q);
+    // Registered customers are stored in the 'users' Firestore collection
+    const usersSnapshot = await getDocs(collection(db, "users"));
+    cachedUsers.clear();
 
-    if (snap.empty) {
-      tbody.innerHTML = `<tr><td colspan="3" style="text-align:center">No records found for this loan.</td></tr>`;
+    if (!createSelect) return;
+
+    if (usersSnapshot.empty) {
+      createSelect.innerHTML = `<option value="">No registered customers found</option>`;
+      if (historySelect) {
+        historySelect.innerHTML = `<option value="">All Users (0 found)</option>`;
+      }
+      if (totalUsersEl) totalUsersEl.innerText = "0";
       return;
     }
 
-    let html = "";
-    snap.forEach(docSnap => {
+    createSelect.innerHTML = `<option value="">-- Choose Customer --</option>`;
+    if (historySelect) {
+      historySelect.innerHTML = `<option value="">All Users</option>`;
+    }
+
+    // Populate dropdown with Name, Phone, and UID
+    usersSnapshot.forEach((docSnap) => {
       const data = docSnap.data();
-      // Format the date string from your screenshot "2026-02-22T..."
-      const dateDisplay = data.date ? new Date(data.date).toLocaleDateString() : 'N/A';
-      
-      html += `
-        <tr class="fade-in">
-          <td>${dateDisplay}</td>
-          <td style="text-transform:uppercase; font-size:11px;">${data.type || 'credit'}</td>
-          <td style="font-weight:600; color:var(--success)">+ ${formatCurrency(data.amount)}</td>
-        </tr>`;
+      const uid = docSnap.id;
+      cachedUsers.set(uid, data);
+
+      const name = data.name || data.fullName || "Unnamed Customer";
+      const phone = data.phone || data.phoneNumber || "";
+      const uidDisplay = `[${uid.slice(0, 6)}...]`;
+
+      let fullLabel = name;
+      if (phone) {
+        fullLabel += ` (${phone})`;
+      }
+      fullLabel += ` ${uidDisplay}`;
+
+      // Customer selection for Create New Loan
+      const opt = new Option(fullLabel, uid);
+      createSelect.add(opt);
+
+      // Customer filter for Loan Monitoring
+      if (historySelect) {
+        const filterLabel = phone ? `${name} (${phone})` : name;
+        historySelect.add(new Option(filterLabel, uid));
+      }
     });
-    tbody.innerHTML = html;
-  } catch (err) {
-    console.error("Ledger Error:", err);
-    tbody.innerHTML = `<tr><td colspan="3" style="text-align:center; color:red;">Query error. Check index.</td></tr>`;
+
+    if (totalUsersEl) {
+      totalUsersEl.innerText = cachedUsers.size;
+    }
+
+  } catch (error) {
+    console.error("Error loading users from Firestore:", error);
+    if (createSelect) {
+      createSelect.innerHTML = `<option value="">Error: ${escapeHtml(error.code || error.message)}</option>`;
+    }
+    if (totalUsersEl) totalUsersEl.innerText = "Error";
+
+    if (error.code === "permission-denied") {
+      showErrorBanner("Permission Denied: Unable to read 'users' collection. Please ensure your account has administrator privileges in Firestore.");
+    } else {
+      showErrorBanner(`Failed to load users: ${error.message}`);
+    }
+  }
+}
+
+/* ================= LOAD LOANS & COMPUTE STATISTICS ================= */
+async function loadLoansAndSummary() {
+  const activeLoansEl = document.getElementById("totalActiveLoans");
+  const outstandingEl = document.getElementById("totalOutstanding");
+  const closedLoansEl = document.getElementById("totalClosedLoans");
+  const historyTable = document.getElementById("loanHistoryTable");
+
+  try {
+    // Loans are stored in the 'loans' Firestore collection
+    const loansSnap = await getDocs(collection(db, "loans"));
+    cachedLoans = [];
+
+    let activeCount = 0;
+    let closedCount = 0;
+    let totalOutstanding = 0;
+
+    loansSnap.forEach((docSnap) => {
+      const loanData = docSnap.data();
+      const loan = { id: docSnap.id, ...loanData };
+      cachedLoans.push(loan);
+
+      const status = (loan.status || "").toLowerCase().trim();
+      const remaining = Number(loan.remainingAmount ?? loan.totalWithInterest ?? loan.principal ?? 0);
+
+      if (status === "closed" || remaining <= 0) {
+        closedCount++;
+      } else {
+        activeCount++;
+        totalOutstanding += remaining > 0 ? remaining : 0;
+      }
+    });
+
+    // Update Dashboard Statistics Cards with real computed data
+    if (activeLoansEl) activeLoansEl.innerText = activeCount;
+    if (closedLoansEl) closedLoansEl.innerText = closedCount;
+    if (outstandingEl) outstandingEl.innerText = formatCurrency(totalOutstanding);
+
+    // Render Loan Monitoring table with current filter (default: All Users)
+    const currentFilter = document.getElementById("historyUserSelect")?.value || "";
+    renderLoanMonitoringTable(currentFilter);
+
+  } catch (error) {
+    console.error("Error loading loans from Firestore:", error);
+    if (activeLoansEl) activeLoansEl.innerText = "Error";
+    if (closedLoansEl) closedLoansEl.innerText = "Error";
+    if (outstandingEl) outstandingEl.innerText = "Error";
+
+    if (historyTable) {
+      historyTable.innerHTML = `<tr><td colspan="4" style="text-align:center; padding:30px; color:#ef4444;">Failed to load loans: ${escapeHtml(error.message)}</td></tr>`;
+    }
+
+    if (error.code === "permission-denied") {
+      showErrorBanner("Permission Denied: Unable to read 'loans' collection. Verify Firestore security rules for admin access.");
+    } else {
+      showErrorBanner(`Failed to load loans: ${error.message}`);
+    }
+  }
+}
+
+/* ================= RENDER LOAN MONITORING TABLE ================= */
+function renderLoanMonitoringTable(filterUserId = "") {
+  const tbody = document.getElementById("loanHistoryTable");
+  if (!tbody) return;
+
+  let loansToDisplay = cachedLoans;
+  if (filterUserId) {
+    loansToDisplay = cachedLoans.filter(loan => loan.userId === filterUserId);
+  }
+
+  if (loansToDisplay.length === 0) {
+    const emptyMessage = filterUserId
+      ? "No loan records found for the selected customer."
+      : "No loan records found in Firestore.";
+    tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; padding:40px; color:var(--text-muted);">${emptyMessage}</td></tr>`;
+    return;
+  }
+
+  // Sort loans by date descending if available
+  loansToDisplay.sort((a, b) => {
+    const dateA = a.createdAt?.toDate ? a.createdAt.toDate() : new Date(a.startDate || a.createdAt || 0);
+    const dateB = b.createdAt?.toDate ? b.createdAt.toDate() : new Date(b.startDate || b.createdAt || 0);
+    return dateB - dateA;
+  });
+
+  let html = "";
+  loansToDisplay.forEach((loan) => {
+    const loanId = loan.id;
+    const userData = cachedUsers.get(loan.userId);
+
+    // Column 1: Customer Details (Name, Phone, UID)
+    const custName = userData?.name || userData?.fullName || "Customer";
+    const custPhone = userData?.phone || userData?.phoneNumber || "";
+    const custUid = loan.userId ? `UID: ${loan.userId.slice(0, 8)}...` : `Loan: #${loanId.slice(0, 6)}`;
+
+    const customerCell = `
+      <div>
+        <strong>${escapeHtml(custName)}</strong>
+        <div style="font-size:12px; color:var(--text-muted); margin-top:2px;">
+          ${custPhone ? `${escapeHtml(custPhone)} &bull; ` : ''}${escapeHtml(custUid)}
+        </div>
+      </div>
+    `;
+
+    // Column 2: Remaining Balance & Total
+    const remaining = Number(loan.remainingAmount ?? loan.totalWithInterest ?? loan.principal ?? 0);
+    const total = Number(loan.totalWithInterest ?? loan.principal ?? 0);
+    const remainingCell = `
+      <div>
+        <strong style="color:var(--text-main); font-size:15px;">${formatCurrency(remaining)}</strong>
+        <div style="font-size:12px; color:var(--text-muted); margin-top:2px;">
+          Total: ${formatCurrency(total)}
+        </div>
+      </div>
+    `;
+
+    // Column 3: Status Badge
+    const rawStatus = (loan.status || "").toLowerCase().trim();
+    const isActive = rawStatus === "active" && remaining > 0;
+    const statusBadge = isActive
+      ? `<span class="badge-active">Active</span>`
+      : `<span style="background:#f1f5f9; color:#475569; padding:4px 8px; border-radius:6px; font-size:12px; font-weight:600;">Closed</span>`;
+
+    // Column 4: Action Button
+    const actionCell = `
+      <a href="admin_user_details.html?loanId=${encodeURIComponent(loanId)}" class="btn-primary" style="display:inline-block; text-align:center; text-decoration:none; padding:7px 14px; font-size:12px; width:auto; border-radius:6px;">
+        Ledger / Pay
+      </a>
+    `;
+
+    html += `
+      <tr>
+        <td>${customerCell}</td>
+        <td>${remainingCell}</td>
+        <td>${statusBadge}</td>
+        <td>${actionCell}</td>
+      </tr>
+    `;
+  });
+
+  tbody.innerHTML = html;
+}
+
+/* ================= INITIAL LOAD COORDINATOR ================= */
+async function loadDashboardData() {
+  setLoadingState();
+  await loadUsers();
+  await loadLoansAndSummary();
+}
+
+/* ================= ADMIN AUTH & SESSION VERIFICATION ================= */
+onAuthStateChanged(auth, async (user) => {
+  if (!user) {
+    window.location.href = "admin-login.html";
+    return;
+  }
+
+  try {
+    let isAdmin = false;
+
+    // Primary check: Check 'admins' collection by UID
+    try {
+      const adminSnap = await getDoc(doc(db, "admins", user.uid));
+      if (adminSnap.exists()) {
+        isAdmin = true;
+      }
+    } catch (checkErr) {
+      console.warn("Could not check 'admins' collection:", checkErr.message);
+    }
+
+    // Secondary fallback: Check 'users' collection for role == 'admin'
+    if (!isAdmin) {
+      try {
+        const userSnap = await getDoc(doc(db, "users", user.uid));
+        if (userSnap.exists() && userSnap.data()?.role === "admin") {
+          isAdmin = true;
+        }
+      } catch (checkErr) {
+        console.warn("Could not check 'users' collection role:", checkErr.message);
+      }
+    }
+
+    if (!isAdmin) {
+      alert("Access Denied: Your account does not have administrator privileges.");
+      await signOut(auth);
+      window.location.href = "admin-login.html";
+      return;
+    }
+
+    clearErrorBanner();
+
+    // Hook filter change event
+    const historyFilter = document.getElementById("historyUserSelect");
+    if (historyFilter) {
+      historyFilter.addEventListener("change", (e) => {
+        renderLoanMonitoringTable(e.target.value);
+      });
+    }
+
+    // Load actual Firestore data
+    await loadDashboardData();
+
+  } catch (error) {
+    console.error("Authentication verification error:", error);
+    showErrorBanner(`Admin verification failed: ${error.message}`);
+  }
+});
+
+/* ================= CREATE NEW LOAN ================= */
+window.createLoan = async function () {
+  const userSelect = document.getElementById("userId");
+  const userId = userSelect ? userSelect.value : "";
+  const principalInput = document.getElementById("principal");
+  const rateInput = document.getElementById("interest");
+  const monthsInput = document.getElementById("months");
+
+  const principal = parseFloat(principalInput?.value);
+  const rate = parseFloat(rateInput?.value);
+  const months = parseInt(monthsInput?.value, 10);
+
+  if (!userId) {
+    alert("Please select a registered customer.");
+    return;
+  }
+
+  if (isNaN(principal) || principal <= 0) {
+    alert("Please enter a valid principal amount greater than 0.");
+    principalInput?.focus();
+    return;
+  }
+
+  if (isNaN(rate) || rate < 0) {
+    alert("Please enter a valid interest rate.");
+    rateInput?.focus();
+    return;
+  }
+
+  if (isNaN(months) || months <= 0) {
+    alert("Please enter a duration of at least 1 month.");
+    monthsInput?.focus();
+    return;
+  }
+
+  const interestAmount = (principal * rate * months) / 100;
+  const total = principal + interestAmount;
+
+  try {
+    await addDoc(collection(db, "loans"), {
+      userId,
+      principal,
+      interestRate: rate,
+      months,
+      totalWithoutInterest: principal,
+      totalWithInterest: total,
+      remainingAmount: total,
+      status: "active",
+      startDate: new Date().toISOString(),
+      createdAt: serverTimestamp()
+    });
+
+    alert("Loan Agreement Generated Successfully!");
+
+    // Reset input fields
+    if (principalInput) principalInput.value = "";
+    if (rateInput) rateInput.value = "2";
+    if (monthsInput) monthsInput.value = "12";
+
+    // Refresh real Firestore dashboard statistics & loan records
+    await loadLoansAndSummary();
+
+  } catch (error) {
+    console.error("Error creating loan:", error);
+    alert(`Failed to create loan: ${error.message}`);
+    showErrorBanner(`Failed to create loan: ${error.message}`);
   }
 };
 
-window.closeLedgerModal = () => document.getElementById("ledgerModal").style.display = "none";
-
-/* ================= CREATE LOAN ================= */
-window.createLoan = async function () {
-  const userId = document.getElementById("userId").value;
-  const principal = parseFloat(document.getElementById("principal").value);
-  const rate = parseFloat(document.getElementById("interest").value);
-  const months = parseInt(document.getElementById("months").value);
-
-  if (!userId || isNaN(principal)) return alert("Check inputs");
-
-  const total = principal + (principal * rate * months / 100);
-
-  await addDoc(collection(db, "loans"), {
-    userId, principal, interestRate: rate, months,
-    totalWithInterest: total, remainingAmount: total,
-    status: "active", startDate: serverTimestamp()
-  });
-
-  alert("Loan Created");
-  loadDashboardSummary();
+/* ================= NAVIGATION & ACTIONS ================= */
+window.toggleAdminCreate = function () {
+  window.location.href = "admin_register.html";
 };
 
-/* ================= PAYMENT ================= */
-window.openPaymentModal = (id) => { currentLoanId = id; document.getElementById("paymentModal").style.display = "flex"; };
-window.closePaymentModal = () => document.getElementById("paymentModal").style.display = "none";
-
-window.submitPayment = async function () {
-  const amount = parseFloat(document.getElementById("paymentAmountInput").value);
-  if (isNaN(amount) || amount <= 0) return;
-
-  const loanRef = doc(db, "loans", currentLoanId);
-  const loanSnap = await getDoc(loanRef);
-  const loanData = loanSnap.data();
-  const remaining = loanData.remainingAmount - amount;
-
-  // Add to ledger (Matching your screenshot format)
-  await addDoc(collection(db, "ledger"), {
-    loanId: currentLoanId,
-    userId: loanData.userId,
-    amount: amount,
-    type: "credit",
-    date: new Date().toISOString() // Matches your screenshot date format
-  });
-
-  await updateDoc(loanRef, {
-    remainingAmount: remaining < 0 ? 0 : remaining,
-    status: remaining <= 0 ? "closed" : "active"
-  });
-
-  closePaymentModal();
-  loadDashboardSummary();
-  // Trigger table refresh
-  document.getElementById("historyUserSelect").dispatchEvent(new Event("change"));
+window.logout = async function () {
+  try {
+    await signOut(auth);
+  } catch (error) {
+    console.error("Logout error:", error);
+  }
+  window.location.href = "admin-login.html";
 };
 
-window.logout = async () => { await signOut(auth); window.location = "admin-login.html"; };
+// Safe modal fallbacks for backwards compatibility
+window.openLedgerModal = function (loanId) {
+  if (loanId) {
+    window.location.href = `admin_user_details.html?loanId=${encodeURIComponent(loanId)}`;
+  }
+};
+
+window.openPaymentModal = function (loanId) {
+  if (loanId) {
+    window.location.href = `admin_user_details.html?loanId=${encodeURIComponent(loanId)}`;
+  }
+};
+
+window.closeLedgerModal = () => {};
+window.closePaymentModal = () => {};

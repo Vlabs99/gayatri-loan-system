@@ -15,7 +15,6 @@
 
         .container { max-width: 800px; margin: 0 auto; }
         
-        /* BRANDING HEADER */
         .brand-header {
             background: var(--dark); color: white; padding: 30px; border-radius: 24px 24px 0 0;
             display: flex; justify-content: space-between; align-items: center;
@@ -23,73 +22,74 @@
         .brand-header h1 { margin: 0; font-size: 24px; color: var(--primary); }
         .logout-link { color: #f87171; text-decoration: none; font-size: 14px; font-weight: 600; cursor: pointer; }
 
-        /* SUMMARY CARD */
         .main-card {
-            background: var(--white); padding: 40px; border-radius: 0 0 24px 24px;
+            background: var(--white); padding: 30px; border-radius: 0 0 24px 24px;
             box-shadow: var(--shadow); margin-bottom: 20px;
         }
-        .welcome-msg { margin-bottom: 30px; }
-        .welcome-msg h2 { margin: 0; font-size: 28px; }
-        .welcome-msg p { color: #64748b; margin: 5px 0 0; }
-
-        .stats-row { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 30px; }
-        .stat-box { padding: 20px; border-radius: 16px; border: 1px solid var(--border); }
-        .stat-box label { font-size: 12px; font-weight: 700; color: #64748b; text-transform: uppercase; }
-        .stat-box div { font-size: 24px; font-weight: 800; margin-top: 8px; }
 
         .balance-card {
             background: #eff6ff; border: 1px solid #dbeafe; padding: 25px;
-            border-radius: 20px; text-align: center; margin-top: 20px;
+            border-radius: 20px; text-align: center; margin-bottom: 25px;
         }
-        .balance-card label { color: var(--primary); font-weight: 700; }
         .balance-card .amount { font-size: 42px; font-weight: 800; color: var(--dark); margin: 10px 0; }
 
-        .footer-address {
-            text-align: center; margin-top: 40px; padding: 20px;
-            font-size: 13px; color: #64748b; line-height: 1.6;
-        }
+        .stats-row { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 30px; }
+        .stat-box { padding: 15px; border-radius: 16px; border: 1px solid var(--border); }
+        .stat-box label { font-size: 11px; font-weight: 700; color: #64748b; text-transform: uppercase; }
+        .stat-box div { font-size: 20px; font-weight: 800; margin-top: 5px; }
+
+        /* HISTORY TABLE STYLES */
+        .history-section { border-top: 2px solid var(--light); pt: 20px; }
+        .history-title { font-size: 16px; font-weight: 700; margin-bottom: 15px; display: block; color: var(--dark); }
+        table { width: 100%; border-collapse: collapse; }
+        th { text-align: left; font-size: 12px; color: #64748b; padding: 10px; border-bottom: 1px solid var(--border); }
+        td { padding: 12px 10px; font-size: 14px; border-bottom: 1px solid #f8fafc; }
+        .amt-paid { font-weight: 700; color: #15803d; text-align: right; }
+
+        .footer-address { text-align: center; margin-top: 40px; font-size: 12px; color: #64748b; line-height: 1.6; }
     </style>
 </head>
 <body>
 
     <div class="container">
         <header class="brand-header">
-            <div>
-                <h1>GAYATRI</h1>
-                <span style="font-size: 10px; color: #94a3b8; letter-spacing: 1px;">ELECTRONICS KHATA</span>
-            </div>
+            <div><h1>GAYATRI</h1><span style="font-size: 10px; color: #94a3b8;">ELECTRONICS</span></div>
             <div id="logoutBtn" class="logout-link">Sign Out</div>
         </header>
 
         <div class="main-card">
-            <div class="welcome-msg">
-                <h2 id="userName">Welcome!</h2>
-                <p>Your current loan account summary is below.</p>
-            </div>
-
+            <h2 id="userName" style="margin-top: 0;">Welcome!</h2>
+            
             <div class="balance-card">
-                <label>Remaining Balance (Outstanding)</label>
+                <label style="color: var(--primary); font-weight: 700; font-size: 13px;">Remaining Balance</label>
                 <div class="amount" id="userRemaining">₹0</div>
-                <div id="loanStatusBadge" style="font-size: 12px; font-weight: 700; color: #10b981;">ACTIVE ACCOUNT</div>
             </div>
 
             <div class="stats-row">
-                <div class="stat-box">
-                    <label>Principal Amount</label>
-                    <div id="userPrincipal">₹0</div>
-                </div>
-                <div class="stat-box" style="background: #f0fdf4;">
-                    <label>Total Paid to Date</label>
-                    <div id="userPaid" style="color: #15803d;">₹0</div>
-                </div>
+                <div class="stat-box"><label>Principal</label><div id="userPrincipal">₹0</div></div>
+                <div class="stat-box" style="background: #f0fdf4;"><label>Paid So Far</label><div id="userPaid" style="color: #15803d;">₹0</div></div>
+            </div>
+
+            <div class="history-section">
+                <span class="history-title">My Payment History</span>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>Note</th>
+                            <th style="text-align: right;">Amount</th>
+                        </tr>
+                    </thead>
+                    <tbody id="userLedgerBody">
+                        <tr><td colspan="3" style="text-align:center; padding: 30px; color: #94a3b8;">Loading history...</td></tr>
+                    </tbody>
+                </table>
             </div>
         </div>
 
         <div class="footer-address">
             <strong>Chudasama Baldevsinh Mansang</strong><br>
-            +91 9924232759<br>
-            Beside Chamunda Games Store, Opp. Pir Ni Dargah, Street No. 5,<br>
-            Khodiyar Colony, Jamnagar, Gujarat 361006
+            Beside Chamunda Games Store, Khodiyar Colony, Jamnagar
         </div>
     </div>
 

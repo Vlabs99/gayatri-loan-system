@@ -1,118 +1,116 @@
 import { auth, db } from "./firebase-config.js";
-import { doc, getDoc, collection, query, where, getDocs, addDoc, updateDoc, serverTimestamp, orderBy } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+import { 
+    doc, getDoc, collection, query, where, getDocs, orderBy, addDoc, updateDoc, serverTimestamp 
+} from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
 
-// Get User ID from URL (e.g., admin_user_details.html?id=USER_UID)
+// 1. Extract Loan ID from the URL (?loanId=XXXXX)
 const urlParams = new URLSearchParams(window.location.search);
-const userId = urlParams.get('id');
+const loanId = urlParams.get("loanId");
 
-let activeLoanId = null;
-let currentRemaining = 0;
+async function loadPageData() {
+    const ledgerTable = document.getElementById("ledgerTableBody");
 
-/**
- * Loads User Profile and Active Loan
- */
-async function loadCustomerData() {
-    if (!userId) return;
+    // ERROR CHECK: If no ID in URL, stop and show message
+    if (!loanId) {
+        console.error("Critical Error: No Loan ID in URL");
+        ledgerTable.innerHTML = "<tr><td colspan='3' style='color:red; text-align:center; padding:20px;'>Error: No Loan Selected. Please go back to Customers List.</td></tr>";
+        return;
+    }
 
     try {
-        // 1. Fetch User Info
-        const userSnap = await getDoc(doc(db, "users", userId));
-        if (userSnap.exists()) {
-            const userData = userSnap.data();
-            document.getElementById("customerName").innerText = userData.name;
-            document.getElementById("customerContact").innerText = `${userData.phone} | ${userData.email}`;
+        // 2. Get Loan Document
+        const loanRef = doc(db, "loans", loanId);
+        const loanSnap = await getDoc(loanRef);
+
+        if (!loanSnap.exists()) {
+            ledgerTable.innerHTML = "<tr><td colspan='3' style='text-align:center;'>Loan record not found.</td></tr>";
+            return;
         }
 
-        // 2. Fetch Active Loan
-        const loanQuery = query(collection(db, "loans"), where("userId", "==", userId), where("status", "==", "active"));
-        const loanSnap = await getDocs(loanQuery);
+        const loanData = loanSnap.data();
 
-        if (!loanSnap.empty) {
-            const loanDoc = loanSnap.docs[0];
-            activeLoanId = loanDoc.id;
-            const loanData = loanDoc.data();
+        // 3. Get User Document
+        const userSnap = await getDoc(doc(db, "users", loanData.userId));
+        const userData = userSnap.data();
 
-            currentRemaining = loanData.remainingAmount;
-            document.getElementById("sumPrincipal").innerText = `₹${loanData.principal.toLocaleString('en-IN')}`;
-            document.getElementById("sumTotal").innerText = `₹${loanData.totalWithInterest.toLocaleString('en-IN')}`;
-            document.getElementById("sumRemaining").innerText = `₹${currentRemaining.toLocaleString('en-IN')}`;
-            document.getElementById("sumPaid").innerText = `₹${(loanData.totalWithInterest - currentRemaining).toLocaleString('en-IN')}`;
+        // 4. Update UI Header
+        document.getElementById("custName").innerText = userData.name || "Unknown";
+        document.getElementById("productName").innerText = loanData.productName || "Loan";
+        document.getElementById("remainingAmt").innerText = `₹${loanData.remainingAmount.toLocaleString('en-IN')}`;
+
+        // 5. Fetch History (Ledger)
+        const q = query(collection(db, "ledger"), where("loanId", "==", loanId), orderBy("date", "desc"));
+        const ledgerSnap = await getDocs(q);
+
+        ledgerTable.innerHTML = "";
+
+        if (ledgerSnap.empty) {
+            ledgerTable.innerHTML = "<tr><td colspan='3' style='text-align:center; padding:20px;'>No payment history yet.</td></tr>";
+            return;
+        }
+
+        ledgerSnap.forEach(payDoc => {
+            const pay = payDoc.data();
             
-            loadLedger(activeLoanId);
-        } else {
-            document.getElementById("loanStatus").innerText = "NO ACTIVE LOAN";
-            document.getElementById("loanStatus").className = "status-badge";
-        }
+            // Safe Date+Time Formatting
+            let timeString = "Processing...";
+            if (pay.date) {
+                const d = typeof pay.date.toDate === 'function' ? pay.date.toDate() : new Date(pay.date);
+                timeString = d.toLocaleString('en-IN', {
+                    day: '2-digit', month: '2-digit', year: 'numeric',
+                    hour: '2-digit', minute: '2-digit', hour12: true
+                });
+            }
+
+            ledgerTable.innerHTML += `
+                <tr>
+                    <td style="font-size:12px; color:#64748b;">${timeString}</td>
+                    <td>${pay.note || 'Cash'}</td>
+                    <td style="text-align:right; font-weight:700; color:#16a34a;">₹${pay.amount.toLocaleString('en-IN')}</td>
+                </tr>`;
+        });
+
     } catch (error) {
-        console.error("Error loading customer details:", error);
+        console.error("Data Load Error:", error);
+        if (error.message.includes("index")) {
+            ledgerTable.innerHTML = "<tr><td colspan='3' style='text-align:center; color:blue;'>Firebase is building the data index. Please wait 2 minutes and refresh.</td></tr>";
+        }
     }
 }
 
-/**
- * Loads Payment History
- */
-async function loadLedger(loanId) {
-    const ledgerTable = document.getElementById("ledgerTableBody");
-    ledgerTable.innerHTML = "";
-
-    const q = query(collection(db, "ledger"), where("loanId", "==", loanId), orderBy("date", "desc"));
-    const snapshot = await getDocs(q);
-
-    snapshot.forEach(doc => {
-        const data = doc.data();
-        const row = `<tr>
-            <td>${new Date(data.date.toDate()).toLocaleDateString('en-IN')}</td>
-            <td>${data.note || 'Payment'}</td>
-            <td style="color: #15803d; font-weight: 700;">₹${data.amount.toLocaleString('en-IN')}</td>
-        </tr>`;
-        ledgerTable.innerHTML += row;
-    });
-}
-
-/**
- * Process New Payment
- */
-document.getElementById("paymentForm").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const amount = parseFloat(document.getElementById("payAmount").value);
+// Global payment function
+window.addPayment = async function() {
+    const amt = parseFloat(document.getElementById("payAmount").value);
     const note = document.getElementById("payNote").value;
 
-    if (!activeLoanId || amount <= 0) return;
-
-    const payBtn = document.getElementById("payBtn");
-    payBtn.disabled = true;
-    payBtn.innerText = "Processing...";
+    if (!amt || amt <= 0) return alert("Enter valid amount");
 
     try {
-        // 1. Add to Ledger
+        const loanRef = doc(db, "loans", loanId);
+        const loanSnap = await getDoc(loanRef);
+        const loanData = loanSnap.data();
+
+        if (amt > loanData.remainingAmount) return alert("Amount too high!");
+
         await addDoc(collection(db, "ledger"), {
-            loanId: activeLoanId,
-            userId: userId,
-            amount: amount,
+            loanId: loanId,
+            userId: loanData.userId,
+            amount: amt,
             note: note,
             date: serverTimestamp()
         });
 
-        // 2. Update Loan Balance
-        const newRemaining = currentRemaining - amount;
-        const loanRef = doc(db, "loans", activeLoanId);
-        
         await updateDoc(loanRef, {
-            remainingAmount: newRemaining,
-            status: newRemaining <= 0 ? "closed" : "active"
+            remainingAmount: loanData.remainingAmount - amt
         });
 
-        alert("Payment Recorded Successfully!");
-        location.reload(); // Refresh to show new balance
-    } catch (error) {
-        alert("Error: " + error.message);
-        payBtn.disabled = false;
-        payBtn.innerText = "Submit Payment";
-    }
-});
+        alert("Success!");
+        location.reload();
+    } catch (e) { console.error(e); }
+};
 
 onAuthStateChanged(auth, (user) => {
-    if (user) loadCustomerData();
+    if (user) loadPageData();
     else window.location.href = "index.html";
 });

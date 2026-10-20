@@ -1,59 +1,47 @@
 import { auth, db } from "./firebase-config.js";
-import { collection, getDocs, query, orderBy } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+import { collection, getDocs } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
 
-const userTableBody = document.getElementById("userTableBody");
+async function loadCustomers() {
+    const tableBody = document.getElementById("userTableBody");
+    if (!tableBody) return;
 
-/**
- * Fetches all users from the 'users' collection and displays them in the table.
- */
-async function fetchAllUsers() {
     try {
-        // Query users collection, ordered by name
-        const q = query(collection(db, "users"), orderBy("name", "asc"));
-        const querySnapshot = await getDocs(q);
-        
-        userTableBody.innerHTML = "";
-
-        if (querySnapshot.empty) {
-            userTableBody.innerHTML = `<tr><td colspan="4" style="text-align:center; padding:30px;">No customers found.</td></tr>`;
+        const usersSnap = await getDocs(collection(db, "users"));
+        if (usersSnap.empty) {
+            tableBody.innerHTML = `<tr><td colspan="4" style="text-align: center; padding: 40px; color: var(--secondary);">No registered customers found.</td></tr>`;
             return;
         }
 
-        querySnapshot.forEach((doc) => {
-            const user = doc.data();
-            const userId = doc.id;
-
-            const row = document.createElement("tr");
-            row.innerHTML = `
-                <td>
-                    <span class="user-name">${user.name || 'N/A'}</span>
-                    <span class="user-email">${user.email}</span>
-                </td>
-                <td>${user.phone || 'N/A'}</td>
-                <td style="max-width: 250px; font-size: 12px; color: #64748b;">
-                    ${user.address || 'No address provided'}
-                </td>
-                <td>
-                    <button class="btn-view" onclick="window.location.href='admin_user_details.html?id=${userId}'">
-                        View History
-                    </button>
-                </td>
+        let html = "";
+        usersSnap.forEach((userDoc) => {
+            const user = userDoc.data();
+            const uid = userDoc.id;
+            html += `
+                <tr>
+                    <td>
+                        <span class="user-name">${user.name || 'Unnamed'}</span>
+                        <span class="user-email">${user.email || 'No email'} &bull; UID: ${uid.slice(0, 8)}...</span>
+                    </td>
+                    <td>${user.phone || 'N/A'}</td>
+                    <td>${user.address || 'N/A'}</td>
+                    <td>
+                        <button class="btn-view" onclick="location.href='admin.html'">Manage</button>
+                    </td>
+                </tr>
             `;
-            userTableBody.appendChild(row);
         });
-
-    } catch (error) {
-        console.error("Error fetching users:", error);
-        userTableBody.innerHTML = `<tr><td colspan="4" style="text-align:center; color:red; padding:20px;">Error: ${error.message}</td></tr>`;
+        tableBody.innerHTML = html;
+    } catch (err) {
+        console.error("Error loading users:", err);
+        tableBody.innerHTML = `<tr><td colspan="4" style="text-align: center; color: red; padding: 20px;">Error loading customers: ${err.message}</td></tr>`;
     }
 }
 
-// Security & Initialization
 onAuthStateChanged(auth, (user) => {
     if (user) {
-        fetchAllUsers();
+        loadCustomers();
     } else {
-        window.location.href = "index.html";
+        window.location.href = "admin-login.html";
     }
 });

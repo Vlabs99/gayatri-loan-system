@@ -6,69 +6,58 @@
     <title>Global Ledger | Gayatri Electronics</title>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        :root {
-            --primary: #2563eb; --dark: #0f172a; --light: #f8fafc; --white: #ffffff;
-            --border: #e2e8f0; --shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
-        }
-        * { box-sizing: border-box; font-family: 'Plus Jakarta Sans', sans-serif; }
-        body { margin: 0; background-color: var(--light); display: flex; min-height: 100vh; }
-
-        /* SIDEBAR (Consistent) */
-        .sidebar { width: 280px; background: var(--dark); color: var(--white); padding: 30px; position: fixed; height: 100vh; }
-        .sidebar h2 { color: var(--primary); margin: 0; font-weight: 800; }
-        .nav-link { display: block; padding: 12px; color: #cbd5e1; text-decoration: none; border-radius: 10px; margin-top: 10px; }
-        .nav-link.active { background: var(--primary); color: white; }
-
-        /* MAIN CONTENT */
-        .main-content { margin-left: 280px; flex: 1; padding: 40px; }
-        .header { margin-bottom: 30px; }
+        :root { --primary: #2563eb; --dark: #0f172a; --bg: #f8fafc; --border: #e2e8f0; }
+        body { margin: 0; font-family: 'Plus Jakarta Sans', sans-serif; background: var(--bg); display: flex; }
         
-        .card { background: var(--white); border-radius: 20px; border: 1px solid var(--border); box-shadow: var(--shadow); overflow: hidden; }
-        table { width: 100%; border-collapse: collapse; }
-        th { background: #f8fafc; text-align: left; padding: 15px 20px; font-size: 12px; color: #64748b; text-transform: uppercase; border-bottom: 1px solid var(--border); }
-        td { padding: 15px 20px; border-bottom: 1px solid var(--border); font-size: 14px; }
+        /* Sidebar */
+        .sidebar { width: 260px; background: var(--dark); color: white; padding: 25px; height: 100vh; position: fixed; }
+        .sidebar h2 { color: var(--primary); font-size: 20px; margin-bottom: 30px; }
+        .nav-links { list-style: none; padding: 0; }
+        .nav-links li { padding: 12px 15px; border-radius: 10px; margin-bottom: 8px; cursor: pointer; font-size: 14px; }
+        .nav-links a { color: #94a3b8; text-decoration: none; display: block; }
+        .nav-links li.active { background: rgba(37, 99, 235, 0.2); }
+        .nav-links li.active a { color: white; font-weight: 600; }
+
+        /* Content */
+        .main-content { margin-left: 260px; flex-grow: 1; padding: 40px; }
+        .card { background: white; padding: 30px; border-radius: 20px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); border: 1px solid var(--border); }
         
-        .amount-cell { font-weight: 700; color: #166534; }
-        .footer-note { text-align: center; margin-top: 30px; color: #94a3b8; font-size: 12px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th { text-align: left; padding: 15px; background: #f1f5f9; color: #64748b; font-size: 12px; text-transform: uppercase; }
+        td { padding: 15px; border-bottom: 1px solid #f8fafc; font-size: 14px; }
+        .amt { font-weight: 700; color: #16a34a; text-align: right; }
+        .timestamp { font-size: 12px; color: #64748b; }
     </style>
 </head>
 <body>
 
-    <aside class="sidebar">
+    <nav class="sidebar">
         <h2>GAYATRI</h2>
-        <p style="font-size: 12px; color: #94a3b8;">Admin: Baldevsinh</p>
-        <nav>
-            <a href="admin_dashboard.html" class="nav-link">Dashboard</a>
-            <a href="admin_users.html" class="nav-link">Manage Customers</a>
-            <a href="admin_loans.html" class="nav-link">Loan Management</a>
-            <a href="admin_ledger.html" class="nav-link active">Global Ledger</a>
-        </nav>
-    </aside>
+        <ul class="nav-links">
+            <li><a href="admin_dashboard.html">Dashboard</a></li>
+            <li><a href="admin_users.html">Customers</a></li>
+            <li class="active"><a href="admin_ledger.html">Transaction History</a></li>
+        </ul>
+    </nav>
 
     <main class="main-content">
-        <div class="header">
-            <h1>Global Transaction History</h1>
-            <p style="color: #64748b;">A complete record of all payments received across the entire system.</p>
-        </div>
-
         <div class="card">
+            <h2 style="margin-top:0;">Master Payment History</h2>
+            <p style="color: #64748b; font-size: 14px;">Every payment collected across all loans.</p>
+            
             <table>
                 <thead>
                     <tr>
-                        <th>Date</th>
+                        <th>Date & Time</th>
                         <th>Customer Name</th>
-                        <th>Note/Description</th>
-                        <th>Amount Received</th>
+                        <th>Note</th>
+                        <th style="text-align: right;">Amount</th>
                     </tr>
                 </thead>
                 <tbody id="globalLedgerBody">
-                    <tr><td colspan="4" style="text-align:center; padding:40px;">Loading transactions...</td></tr>
+                    <tr><td colspan="4" style="text-align:center; padding:40px;">Loading History...</td></tr>
                 </tbody>
             </table>
-        </div>
-
-        <div class="footer-note">
-            <strong>Gayatri Electronics</strong> | Khodiyar Colony, Jamnagar | +91 9924232759
         </div>
     </main>
 

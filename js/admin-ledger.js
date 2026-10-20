@@ -1,71 +1,58 @@
 import { auth, db } from "./firebase-config.js";
+import { collection, getDocs, query, orderBy, doc, getDoc } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
 
-import {
-  collection,
-  addDoc,
-  doc,
-  updateDoc,
-  getDoc,
-  serverTimestamp
-} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+async function loadFullHistory() {
+    const tableBody = document.getElementById("globalLedgerBody");
+    
+    try {
+        // Query ALL payments across ALL users, ordered by newest first
+        const q = query(collection(db, "ledger"), orderBy("date", "desc"));
+        const snapshot = await getDocs(q);
 
+        if (snapshot.empty) {
+            tableBody.innerHTML = "<tr><td colspan='4' style='text-align:center;'>No payments found.</td></tr>";
+            return;
+        }
 
-window.createLoan = async function(){
+        tableBody.innerHTML = "";
+        const nameCache = {}; // To avoid asking Firebase for the same name twice
 
-  const userId = document.getElementById("userId").value;
-  const principal = parseFloat(document.getElementById("principal").value);
-  const rate = parseFloat(document.getElementById("interest").value);
-  const months = parseInt(document.getElementById("months").value);
+        for (const ledgerDoc of snapshot.docs) {
+            const data = ledgerDoc.data();
+            const uId = data.userId;
 
-  const interestAmount = (principal * rate * months) / (100 * 12);
-  const totalAmount = principal + interestAmount;
-  const emi = totalAmount / months;
+            // Get the User's Name
+            if (!nameCache[uId]) {
+                const uSnap = await getDoc(doc(db, "users", uId));
+                nameCache[uId] = uSnap.exists() ? uSnap.data().name : "Unknown User";
+            }
 
-  const loanRef = await addDoc(collection(db,"loans"),{
-      userId:userId,
-      principal:principal,
-      interestRate:rate,
-      totalAmount:totalAmount,
-      emiAmount:emi,
-      emiMonths:months,
-      remainingAmount:totalAmount,
-      createdAt:serverTimestamp()
-  });
+            // --- DETAILED DATE & TIME ---
+            let dateTimeDisplay = "N/A";
+            if (data.date) {
+                const dateObj = typeof data.date.toDate === 'function' ? data.date.toDate() : new Date(data.date);
+                dateTimeDisplay = dateObj.toLocaleString('en-IN', {
+                    day: '2-digit', month: '2-digit', year: 'numeric',
+                    hour: '2-digit', minute: '2-digit', hour12: true
+                });
+            }
 
-  alert("Loan Created Successfully");
-};
-
-
-
-window.addLedger = async function(){
-
-  const loanId = document.getElementById("loanId").value;
-  const type = document.getElementById("type").value;
-  const amount = parseFloat(document.getElementById("amount").value);
-  const note = document.getElementById("note").value;
-
-  await addDoc(collection(db,"ledger"),{
-      loanId:loanId,
-      type:type,
-      amount:amount,
-      note:note,
-      date:serverTimestamp()
-  });
-
-  // Update remaining balance if credit
-  if(type === "credit"){
-
-    const loanRef = doc(db,"loans",loanId);
-    const loanSnap = await getDoc(loanRef);
-
-    if(loanSnap.exists()){
-        const remaining = loanSnap.data().remainingAmount - amount;
-
-        await updateDoc(loanRef,{
-            remainingAmount: remaining
-        });
+            tableBody.innerHTML += `
+                <tr>
+                    <td class="timestamp">${dateTimeDisplay}</td>
+                    <td><strong>${nameCache[uId]}</strong></td>
+                    <td style="color: #64748b;">${data.note || 'Payment'}</td>
+                    <td class="amt">₹${Number(data.amount).toLocaleString('en-IN')}</td>
+                </tr>
+            `;
+        }
+    } catch (err) {
+        console.error("Ledger Error:", err);
     }
-  }
+}
 
-  alert("Ledger Entry Added");
-};
+onAuthStateChanged(auth, (user) => {
+    if (user) loadFullHistory();
+    else window.location.href = "index.html";
+});
