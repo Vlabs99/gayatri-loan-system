@@ -2,6 +2,104 @@ import { auth, db } from "./firebase-config.js";
 import { collection, getDocs, query, orderBy, limit, doc, getDoc, setDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
 
+/**
+ * Extracts a normalized numeric epoch timestamp (in ms) from various Firestore date fields and formats.
+ * Handles Firestore Timestamps, JS Dates, ISO strings, legacy string formats (DD/MM/YYYY, YYYY-MM-DD), and numbers.
+ */
+function extractPaymentTimestamp(data) {
+    if (!data) return 0;
+    const raw = data.date || data.createdAt || data.timestamp || data.paymentDate || data.time || data.created_at || data.dateTime;
+    if (!raw) return 0;
+
+    // 1. Firestore Timestamp instance (has toDate function)
+    if (typeof raw.toDate === "function") {
+        try {
+            const d = raw.toDate();
+            return isNaN(d.getTime()) ? 0 : d.getTime();
+        } catch (e) {}
+    }
+
+    // 2. Firestore Timestamp-like plain object { seconds, nanoseconds }
+    if (typeof raw.seconds === "number") {
+        return (raw.seconds * 1000) + (raw.nanoseconds ? Math.floor(raw.nanoseconds / 1000000) : 0);
+    }
+
+    // 3. JavaScript Date object
+    if (raw instanceof Date) {
+        return isNaN(raw.getTime()) ? 0 : raw.getTime();
+    }
+
+    // 4. Numeric epoch timestamp
+    if (typeof raw === "number") {
+        return raw > 1e11 ? raw : raw * 1000;
+    }
+
+    // 5. String parsing
+    if (typeof raw === "string") {
+        const trimmed = raw.trim();
+        if (!trimmed) return 0;
+
+        // Standard parse (ISO 8601, RFC2822)
+        const parsed = Date.parse(trimmed);
+        if (!isNaN(parsed)) {
+            return parsed;
+        }
+
+        // DD/MM/YYYY or DD-MM-YYYY with optional time
+        const dmyMatch = trimmed.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})(?:\s+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?/);
+        if (dmyMatch) {
+            const day = parseInt(dmyMatch[1], 10);
+            const month = parseInt(dmyMatch[2], 10) - 1;
+            const year = parseInt(dmyMatch[3], 10);
+            const hour = dmyMatch[4] ? parseInt(dmyMatch[4], 10) : 0;
+            const min = dmyMatch[5] ? parseInt(dmyMatch[5], 10) : 0;
+            const sec = dmyMatch[6] ? parseInt(dmyMatch[6], 10) : 0;
+            const d = new Date(year, month, day, hour, min, sec);
+            if (!isNaN(d.getTime())) return d.getTime();
+        }
+
+        // YYYY/MM/DD or YYYY-MM-DD with optional time
+        const ymdMatch = trimmed.match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})(?:\s+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?/);
+        if (ymdMatch) {
+            const year = parseInt(ymdMatch[1], 10);
+            const month = parseInt(ymdMatch[2], 10) - 1;
+            const day = parseInt(ymdMatch[3], 10);
+            const hour = ymdMatch[4] ? parseInt(ymdMatch[4], 10) : 0;
+            const min = ymdMatch[5] ? parseInt(ymdMatch[5], 10) : 0;
+            const sec = ymdMatch[6] ? parseInt(ymdMatch[6], 10) : 0;
+            const d = new Date(year, month, day, hour, min, sec);
+            if (!isNaN(d.getTime())) return d.getTime();
+        }
+    }
+
+    return 0;
+}
+
+/**
+ * Formats a transaction date for display.
+ */
+function formatPaymentDateTime(data) {
+    if (!data) return "Just now";
+    const ts = extractPaymentTimestamp(data);
+    if (ts > 0) {
+        const d = new Date(ts);
+        return d.toLocaleString("en-IN", {
+            day: "2-digit",
+            month: "2-digit",
+            year: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
+            hour12: true
+        });
+    }
+
+    const raw = data.date || data.createdAt || data.timestamp || data.paymentDate || data.time;
+    if (typeof raw === "string" && raw.trim()) {
+        return raw.trim();
+    }
+    return "Just now";
+}
+
 async function loadDashboardData() {
     try {
         // 1. Fetch Loans for Summary Stats
@@ -20,49 +118,65 @@ async function loadDashboardData() {
         document.getElementById("totalCollected").innerText = `₹${(totalExp - totalRem).toLocaleString('en-IN')}`;
         document.getElementById("totalPending").innerText = `₹${totalRem.toLocaleString('en-IN')}`;
 
-        // 2. Fetch Recent 5 Payments for the Activity Table
-        const recentQuery = query(collection(db, "ledger"), orderBy("date", "desc"), limit(5));
-        const ledgerSnap = await getDocs(recentQuery);
+        // 2. Fetch all payment transactions from the Firestore ledger collection
         const recentTable = document.getElementById("recentLedgerBody");
+        if (!recentTable) return;
+
+        const ledgerSnap = await getDocs(collection(db, "ledger"));
 
         if (ledgerSnap.empty) {
             recentTable.innerHTML = `<tr><td colspan="4" style="text-align:center; padding:20px;">No recent activity.</td></tr>`;
             return;
         }
 
+        // Collect all transactions and compute normalized timestamps
+        const allTransactions = [];
+        ledgerSnap.forEach((docSnap) => {
+            const data = docSnap.data() || {};
+            allTransactions.push({
+                id: docSnap.id,
+                ...data,
+                _timestamp: extractPaymentTimestamp(data)
+            });
+        });
+
+        // Sort newest payments first (descending order by transaction date and time)
+        allTransactions.sort((a, b) => b._timestamp - a._timestamp);
+
+        // Display the top 5 most recent payments
+        const recent5 = allTransactions.slice(0, 5);
+
         recentTable.innerHTML = "";
         const nameCache = {};
 
-        for (const ledgerDoc of ledgerSnap.docs) {
-            const data = ledgerDoc.data();
-            const userId = data.userId;
+        for (const item of recent5) {
+            const userId = item.userId || item.customerId || item.uid;
 
-            if (!nameCache[userId]) {
-                const userSnap = await getDoc(doc(db, "users", userId));
-                nameCache[userId] = userSnap.exists() ? userSnap.data().name : "Unknown User";
+            if (userId && !nameCache[userId]) {
+                try {
+                    const userSnap = await getDoc(doc(db, "users", userId));
+                    nameCache[userId] = userSnap.exists()
+                        ? (userSnap.data().name || userSnap.data().fullName || "Unknown User")
+                        : (item.customerName || item.name || item.userName || "Customer");
+                } catch (e) {
+                    nameCache[userId] = item.customerName || item.name || item.userName || "Customer";
+                }
             }
 
-            // --- UPDATED DATE & TIME FORMATTING ---
-            let dateTimeDisplay = "Just now";
-            if (data.date) {
-                const dateObj = typeof data.date.toDate === 'function' ? data.date.toDate() : new Date(data.date);
-                
-                dateTimeDisplay = dateObj.toLocaleString('en-IN', {
-                    day: '2-digit',
-                    month: '2-digit',
-                    year: 'numeric',
-                    hour: '2-digit',
-                    minute: '2-digit',
-                    hour12: true
-                });
-            }
+            const customerName = (userId && nameCache[userId])
+                ? nameCache[userId]
+                : (item.customerName || item.name || item.userName || "Customer");
+
+            const dateTimeDisplay = formatPaymentDateTime(item);
+            const noteDisplay = item.note || item.description || item.paymentNote || item.type || "Payment";
+            const amountNum = Number(item.amount || item.paidAmount || 0);
 
             const row = `
                 <tr>
                     <td style="font-size: 12px; color: #64748b; white-space: nowrap;">${dateTimeDisplay}</td>
-                    <td><strong>${nameCache[userId]}</strong></td>
-                    <td style="color: #64748b; font-size: 12px;">${data.note || 'Payment'}</td>
-                    <td style="text-align: right;" class="amt-pos">₹${Number(data.amount).toLocaleString('en-IN')}</td>
+                    <td><strong>${customerName}</strong></td>
+                    <td style="color: #64748b; font-size: 12px;">${noteDisplay}</td>
+                    <td style="text-align: right;" class="amt-pos">₹${amountNum.toLocaleString('en-IN')}</td>
                 </tr>`;
             recentTable.innerHTML += row;
         }
