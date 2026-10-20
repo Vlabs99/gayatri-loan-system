@@ -61,7 +61,7 @@ async function performAdminLogin() {
         }
 
         alert("Admin Access Granted");
-        window.location.href = "admin.html";
+        window.location.href = "admin_dashboard.html";
 
     } catch (error) {
         if (msgLabel) msgLabel.innerText = error.message ? error.message.replace("Firebase: ", "") : "Access Denied: Invalid Credentials";

@@ -70,7 +70,7 @@ async function performAdminLogin() {
 
     if (isAdmin) {
       alert("Admin Access Granted");
-      window.location.href = "admin.html";
+      window.location.href = "admin_dashboard.html";
     } else {
       await signOut(auth);
       const accessDeniedMsg = "Access Denied: Your account does not have administrator privileges.";
