@@ -107,6 +107,55 @@ window.handleSearch = function() {
     renderTable();
 };
 
+/**
+ * Safely extracts a valid name string if the account has one.
+ * Returns null if the name is missing, empty, or a default placeholder.
+ */
+function getValidAccountName(acc) {
+    if (!acc) return null;
+    const raw = (acc.rawName !== undefined ? acc.rawName : (acc.name || "")).toString().trim();
+    if (!raw) return null;
+    const lower = raw.toLowerCase();
+    if (lower === "unnamed customer" || lower === "admin user" || lower === "admin") {
+        return null;
+    }
+    return raw;
+}
+
+/**
+ * Sorts account objects alphabetically by name (A to Z), case-insensitively.
+ * Accounts with missing or empty names are placed after accounts with valid names.
+ */
+function sortAccountsAlphabetically(accounts) {
+    if (!Array.isArray(accounts)) return;
+
+    accounts.sort((a, b) => {
+        const nameA = getValidAccountName(a);
+        const nameB = getValidAccountName(b);
+
+        const hasValidA = nameA !== null;
+        const hasValidB = nameB !== null;
+
+        // 1. Accounts with valid names come before missing/empty names
+        if (hasValidA && !hasValidB) return -1;
+        if (!hasValidA && hasValidB) return 1;
+
+        // 2. If both have missing or empty names, maintain consistent secondary ordering
+        if (!hasValidA && !hasValidB) {
+            const fallbackA = (a.name || a.email || a.id || "").toString().trim().toLowerCase();
+            const fallbackB = (b.name || b.email || b.id || "").toString().trim().toLowerCase();
+            return fallbackA.localeCompare(fallbackB);
+        }
+
+        // 3. Both have valid names: case-insensitive alphabetical sort (A to Z)
+        const cmp = nameA.toLowerCase().localeCompare(nameB.toLowerCase());
+        if (cmp !== 0) return cmp;
+
+        // Secondary fallback for exact match except casing
+        return nameA.localeCompare(nameB);
+    });
+}
+
 async function loadAccounts() {
     const tableBody = document.getElementById("userTableBody");
     if (!tableBody) return;
@@ -149,9 +198,11 @@ async function loadAccounts() {
         adminAccounts = [];
         adminMap.forEach((adminData, uid) => {
             const userData = userMap.get(uid) || {};
+            const adminRawName = (userData.name || userData.fullName || adminData.name || adminData.fullName || "").trim();
             const merged = {
                 id: uid,
-                name: userData.name || userData.fullName || adminData.name || adminData.fullName || (adminData.email ? adminData.email.split("@")[0] : "") || "Admin User",
+                name: adminRawName || (adminData.email ? adminData.email.split("@")[0] : "") || "Admin User",
+                rawName: adminRawName,
                 email: userData.email || adminData.email || "",
                 phone: userData.phone || userData.phoneNumber || adminData.phone || adminData.phoneNumber || "N/A",
                 address: userData.address || adminData.address || "N/A",
@@ -175,9 +226,11 @@ async function loadAccounts() {
                 return;
             }
 
+            const customerRawName = (data.name || data.fullName || "").trim();
             customerAccounts.push({
                 id: uid,
-                name: data.name || data.fullName || "Unnamed Customer",
+                name: customerRawName || "Unnamed Customer",
+                rawName: customerRawName,
                 email: data.email || "",
                 phone: data.phone || data.phoneNumber || "N/A",
                 address: data.address || "N/A",
@@ -185,6 +238,10 @@ async function loadAccounts() {
                 rawUser: data
             });
         });
+
+        // Sort both lists alphabetically A to Z (case-insensitive, empty/missing names placed after valid names)
+        sortAccountsAlphabetically(customerAccounts);
+        sortAccountsAlphabetically(adminAccounts);
 
         // Update counts
         const customerCountEl = document.getElementById("customerCount");
