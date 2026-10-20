@@ -39,6 +39,20 @@
         th { text-align: left; padding: 12px; border-bottom: 2px solid var(--light); color: #64748b; font-size: 13px; }
         td { padding: 15px 12px; border-bottom: 1px solid var(--light); font-size: 14px; }
         .amt-pos { color: #16a34a; font-weight: 700; }
+        .btn-primary {
+            background: var(--primary);
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 10px;
+            font-weight: 600;
+            font-size: 14px;
+            cursor: pointer;
+            transition: 0.2s;
+            display: inline-flex;
+            align-items: center;
+        }
+        .btn-primary:hover { background: #1d4ed8; }
     </style>
 </head>
 <body>
@@ -57,8 +71,11 @@
 
     <main class="main-content">
         <div class="header">
-            <h1>Business Overview</h1>
-            <div style="font-size: 14px; color: #64748b;">Welcome, <strong>Baldevsinh</strong></div>
+            <div>
+                <h1 style="margin: 0;">Business Overview</h1>
+                <div style="font-size: 14px; color: #64748b; margin-top: 5px;">Welcome, <strong>Baldevsinh</strong></div>
+            </div>
+            <button class="btn-primary" onclick="toggleAdminCreate()">+ Add Admin</button>
         </div>
 
         <div class="stats-grid">

@@ -85,3 +85,8 @@ onAuthStateChanged(auth, async (user) => {
 document.getElementById("logoutBtn")?.addEventListener("click", () => {
     signOut(auth).then(() => window.location.replace("admin-login.html"));
 });
+
+// Admin creation action
+window.toggleAdminCreate = function () {
+    window.location.href = "admin_register.html";
+};
