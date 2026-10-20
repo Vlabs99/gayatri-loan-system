@@ -301,10 +301,21 @@ async function loadDashboardData() {
   await loadLoansAndSummary();
 }
 
+/* ================= BFCACHE & BACK NAVIGATION PROTECTION ================= */
+window.addEventListener("pageshow", (event) => {
+  // If page was restored from browser Back-Forward cache after logout, force reload to re-run auth check
+  if (event.persisted) {
+    window.location.reload();
+  }
+});
+
 /* ================= ADMIN AUTH & SESSION VERIFICATION ================= */
 onAuthStateChanged(auth, async (user) => {
+  const mainEl = document.querySelector(".main-content");
+
   if (!user) {
-    window.location.href = "admin-login.html";
+    if (mainEl) mainEl.style.display = "none";
+    window.location.replace("admin-login.html");
     return;
   }
 
@@ -334,13 +345,17 @@ onAuthStateChanged(auth, async (user) => {
     }
 
     if (!isAdmin) {
+      if (mainEl) mainEl.style.display = "none";
       alert("Access Denied: Your account does not have administrator privileges.");
       await signOut(auth);
-      window.location.href = "admin-login.html";
+      window.location.replace("admin-login.html");
       return;
     }
 
     clearErrorBanner();
+
+    // Reveal protected dashboard content now that admin is verified
+    if (mainEl) mainEl.style.display = "block";
 
     // Hook filter change event
     const historyFilter = document.getElementById("historyUserSelect");
@@ -434,12 +449,20 @@ window.toggleAdminCreate = function () {
 };
 
 window.logout = async function () {
+  const mainEl = document.querySelector(".main-content");
+  if (mainEl) mainEl.style.display = "none";
+
   try {
     await signOut(auth);
   } catch (error) {
     console.error("Logout error:", error);
   }
-  window.location.href = "admin-login.html";
+
+  try {
+    sessionStorage.clear();
+  } catch (e) {}
+
+  window.location.replace("admin-login.html");
 };
 
 // Safe modal fallbacks for backwards compatibility

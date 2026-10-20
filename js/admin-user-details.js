@@ -112,5 +112,5 @@ window.addPayment = async function() {
 
 onAuthStateChanged(auth, (user) => {
     if (user) loadPageData();
-    else window.location.href = "index.html";
+    else window.location.replace("admin-login.html");
 });

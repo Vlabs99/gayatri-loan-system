@@ -94,5 +94,5 @@ loanForm.addEventListener("submit", async (e) => {
 
 onAuthStateChanged(auth, (user) => {
     if (user) loadUsers();
-    else window.location.href = "index.html";
+    else window.location.replace("admin-login.html");
 });

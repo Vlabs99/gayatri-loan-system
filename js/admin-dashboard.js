@@ -76,12 +76,12 @@ onAuthStateChanged(auth, async (user) => {
     if (user) {
         const adminSnap = await getDoc(doc(db, "admins", user.uid));
         if (adminSnap.exists()) loadDashboardData();
-        else window.location.href = "user.html";
+        else window.location.replace("admin-login.html");
     } else {
-        window.location.href = "index.html";
+        window.location.replace("admin-login.html");
     }
 });
 
-document.getElementById("logoutBtn").addEventListener("click", () => {
-    signOut(auth).then(() => window.location.href = "index.html");
+document.getElementById("logoutBtn")?.addEventListener("click", () => {
+    signOut(auth).then(() => window.location.replace("admin-login.html"));
 });

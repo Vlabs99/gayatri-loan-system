@@ -54,5 +54,5 @@ async function loadFullHistory() {
 
 onAuthStateChanged(auth, (user) => {
     if (user) loadFullHistory();
-    else window.location.href = "index.html";
+    else window.location.replace("admin-login.html");
 });
