@@ -10,9 +10,14 @@
  * 
  * Rules:
  * - 30-day fixed periodic cycle on original principal (Day 1-30 = 1 period; Day 31 = 2 periods, etc.).
+ * - Interest boundary normalized to calendar-day midnight so Day 31, 61, 91 start at 00:00:00 local time.
  * - Unpaid interest carries forward without compounding.
  * - Integer-paise 2-decimal precision (avoids floating-point arithmetic errors).
  * - Exact payment allocation validation (interestAllocated + principalAllocated === paymentAmount).
+ * - Chronological ascending processing of payments; invalid/missing payment dates explicitly reported.
+ * - Per-tranche remaining principal tracking without arbitrary allocation guessing.
+ * - Legacy unallocated payments preserved without synthetic splitting.
+ * - Overpayments explicitly reported with non-negative balance clamping.
  * - Optional due date with 7-day warning threshold and overdue evaluation.
  */
 
@@ -38,6 +43,19 @@ export function toPaise(num) {
     const val = Number(num);
     if (isNaN(val)) return 0;
     return Math.round(val * 100);
+}
+
+/**
+ * Normalizes a Date to calendar-day midnight (00:00:00.000 local time).
+ * Ensures date comparisons and period thresholds depend strictly on calendar days,
+ * regardless of the time of day disbursement or payment occurred.
+ * 
+ * @param {Date|null} date 
+ * @returns {Date|null}
+ */
+export function toCalendarMidnight(date) {
+    if (!date || !(date instanceof Date) || isNaN(date.getTime())) return null;
+    return new Date(date.getFullYear(), date.getMonth(), date.getDate());
 }
 
 /**
@@ -152,7 +170,7 @@ function normalizeTranchesInput(input) {
  * Financial Rules:
  * - Fixed monthly interest rate applied to that tranche's ORIGINAL principal.
  * - Strict 30-day periods. Day 1–30 has 1 period's interest.
- * - At the start of day 31, 61, 91, etc., new period interest becomes due.
+ * - Normalized to calendar-day boundary: Day 31, 61, 91 start at 00:00:00 local time.
  * - If asOfDate is before the tranche start date, accrued interest is 0.
  * 
  * @param {Array<object>|object} tranches - Array of tranches or single tranche/loan object.
@@ -164,7 +182,7 @@ function normalizeTranchesInput(input) {
  *       trancheId: string,
  *       originalPrincipal: number,
  *       interestRate: number,
- *       startDate: Date,
+ *       startDate: Date|null,
  *       elapsedDays: number,
  *       periodsDue: number,
  *       interestPerPeriod: number,
@@ -177,7 +195,7 @@ function normalizeTranchesInput(input) {
  */
 export function calculateAccruedInterest(tranches, asOfDate = new Date()) {
     const normalizedAsOf = normalizeDate(asOfDate) || new Date();
-    const asOfMs = normalizedAsOf.getTime();
+    const asOfMidnight = toCalendarMidnight(normalizedAsOf);
     const trancheList = normalizeTranchesInput(tranches);
 
     let totalAccruedPaise = 0;
@@ -186,15 +204,15 @@ export function calculateAccruedInterest(tranches, asOfDate = new Date()) {
     trancheList.forEach((tranche, idx) => {
         const principal = round2(tranche.principal || tranche.originalPrincipal || tranche.amount || 0);
         const rate = Number(tranche.interestRate ?? tranche.rate ?? 0);
-        const startDate = normalizeDate(tranche.startDate || tranche.disbursementDate || tranche.date || tranche.createdAt);
+        const rawStartDate = normalizeDate(tranche.startDate || tranche.disbursementDate || tranche.date || tranche.createdAt);
         const trancheId = tranche.id || tranche.trancheId || `tranche_${idx + 1}`;
 
-        if (principal <= 0 || rate <= 0 || !startDate) {
+        if (principal <= 0 || rate <= 0 || !rawStartDate) {
             trancheBreakdown.push({
                 trancheId,
                 originalPrincipal: principal,
                 interestRate: rate,
-                startDate,
+                startDate: rawStartDate,
                 elapsedDays: 0,
                 periodsDue: 0,
                 interestPerPeriod: 0,
@@ -204,41 +222,42 @@ export function calculateAccruedInterest(tranches, asOfDate = new Date()) {
             return;
         }
 
-        const startMs = startDate.getTime();
+        const startMidnight = toCalendarMidnight(rawStartDate);
 
-        // If evaluation date is before tranche disbursement, no interest is due yet
-        if (asOfMs < startMs) {
+        // If evaluation date calendar day is before disbursement calendar day, no interest is due yet
+        if (asOfMidnight.getTime() < startMidnight.getTime()) {
             const interestPerPeriod = round2((principal * rate) / 100);
             trancheBreakdown.push({
                 trancheId,
                 originalPrincipal: principal,
                 interestRate: rate,
-                startDate,
+                startDate: rawStartDate,
                 elapsedDays: 0,
                 periodsDue: 0,
                 interestPerPeriod,
                 accruedInterest: 0,
-                nextInterestDate: startDate
+                nextInterestDate: rawStartDate
             });
             return;
         }
 
-        const elapsedDays = Math.floor((asOfMs - startMs) / MS_PER_DAY);
-        // Day 1 to Day 30 (elapsed 0 to 29) = 1 period; Day 31 (elapsed 30) = 2 periods; etc.
+        // Calendar-day normalized elapsed days: Day 1 (disbursement date) = 0 elapsed days
+        const elapsedDays = Math.round((asOfMidnight.getTime() - startMidnight.getTime()) / MS_PER_DAY);
+        // Day 1 to Day 30 (elapsed 0 to 29) = 1 period; Day 31 (elapsed 30) = 2 periods; Day 61 (elapsed 60) = 3 periods
         const periodsDue = 1 + Math.floor(elapsedDays / 30);
         const interestPerPeriod = round2((principal * rate) / 100);
         const accruedInterest = round2(interestPerPeriod * periodsDue);
 
         totalAccruedPaise += toPaise(accruedInterest);
 
-        // Next interest boundary date (when periodsDue increments)
-        const nextInterestDate = new Date(startMs + (periodsDue * 30 * MS_PER_DAY));
+        // Next interest boundary date (when periodsDue increments at midnight: startMidnight + periodsDue * 30 days)
+        const nextInterestDate = new Date(startMidnight.getFullYear(), startMidnight.getMonth(), startMidnight.getDate() + (periodsDue * 30));
 
         trancheBreakdown.push({
             trancheId,
             originalPrincipal: principal,
             interestRate: rate,
-            startDate,
+            startDate: rawStartDate,
             elapsedDays,
             periodsDue,
             interestPerPeriod,
@@ -347,29 +366,18 @@ export function validatePaymentAllocation(paymentAmount, interestAllocated, prin
  * - Total Interest Paid = sum of payment interest allocations.
  * - Remaining Principal = Math.max(0, Total Original Principal - Total Principal Paid).
  * - Unpaid Interest = Math.max(0, Total Accrued Interest - Total Interest Paid).
- * - Total Outstanding = Remaining Principal + Unpaid Interest.
+ * - Total Outstanding = Remaining Principal + Unpaid Interest (strictly non-negative).
+ * - Excess Payments = tracked explicitly when totalPrincipalPaid > originalPrincipal or totalInterestPaid > accruedInterest.
  * - Automatic Closure: Loan is closed only when remainingPrincipal === 0 and unpaidInterest === 0.
+ * - Chronological payments: Payments are processed in ascending chronological order. Invalid dates are explicitly reported.
+ * - Per-tranche balances: remainingPrincipal is reported per tranche; for multi-tranche loans without tranche allocation,
+ *   limitation is explicitly reported with remainingPrincipal: null rather than guessing.
+ * - Legacy payments: Unallocated payments are preserved in totalAmountPaid and totalLegacyAmountPaid without synthetic splitting.
  * 
  * @param {Array<object>|object} tranches - Tranche(s) or loan object.
  * @param {Array<object>} [payments=[]] - Payment records.
  * @param {Date|string|number} [asOfDate=new Date()] - As-of evaluation date/time.
- * @returns {object} {
- *    totalOriginalPrincipal: number,
- *    totalAccruedInterest: number,
- *    totalPrincipalPaid: number,
- *    totalInterestPaid: number,
- *    totalAmountPaid: number,
- *    remainingPrincipal: number,
- *    unpaidInterest: number,
- *    totalOutstanding: number,
- *    isClosed: boolean,
- *    status: "active"|"closed",
- *    asOfDate: Date,
- *    trancheBreakdown: Array<object>,
- *    paymentCount: number,
- *    legacyPaymentsCount: number,
- *    hasUnallocatedPayments: boolean
- * }
+ * @returns {object}
  */
 export function calculateOutstandingBalances(tranches, payments = [], asOfDate = new Date()) {
     const normalizedAsOf = normalizeDate(asOfDate) || new Date();
@@ -382,36 +390,119 @@ export function calculateOutstandingBalances(tranches, payments = [], asOfDate =
     const totalAccruedInterest = interestData.totalAccruedInterest;
 
     let totalOriginalPrincipalPaise = 0;
-    trancheList.forEach((t) => {
-        totalOriginalPrincipalPaise += toPaise(t.principal || t.originalPrincipal || t.amount || 0);
+    const trancheMap = new Map();
+
+    trancheList.forEach((t, idx) => {
+        const tid = t.id || t.trancheId || `tranche_${idx + 1}`;
+        const pPaise = toPaise(t.principal || t.originalPrincipal || t.amount || 0);
+        totalOriginalPrincipalPaise += pPaise;
+        trancheMap.set(tid, {
+            trancheId: tid,
+            principalPaise: pPaise,
+            principalPaidPaise: 0
+        });
     });
+
+    // 1. Validate & categorize payments (Chronological payments requirement)
+    const validPayments = [];
+    const invalidPayments = [];
+    const futurePayments = [];
+
+    paymentList.forEach((pay, idx) => {
+        if (!pay || typeof pay !== "object") {
+            invalidPayments.push({
+                index: idx,
+                payment: pay,
+                reason: "Payment record is not an object or is null/undefined"
+            });
+            return;
+        }
+
+        const payDate = normalizeDate(pay.paymentDate || pay.date || pay.createdAt);
+        if (!payDate) {
+            invalidPayments.push({
+                index: idx,
+                payment: pay,
+                reason: "Missing or invalid payment date"
+            });
+            return;
+        }
+
+        // Payments recorded with a timestamp after asOfDate are future payments relative to asOfDate
+        if (payDate.getTime() > asOfMs) {
+            futurePayments.push({
+                index: idx,
+                payment: pay,
+                paymentDate: payDate
+            });
+            return;
+        }
+
+        validPayments.push({
+            ...pay,
+            _normalizedDate: payDate,
+            _index: idx
+        });
+    });
+
+    // 2. Sort valid payments in ascending chronological order (stable secondary sort on original index)
+    validPayments.sort((a, b) => a._normalizedDate.getTime() - b._normalizedDate.getTime() || a._index - b._index);
 
     let totalPrincipalPaidPaise = 0;
     let totalInterestPaidPaise = 0;
     let totalAmountPaidPaise = 0;
+    let totalLegacyAmountPaidPaise = 0;
     let legacyPaymentsCount = 0;
+    let hasUnassignedTranchePayments = false;
+    let unassignedTranchePaymentsCount = 0;
+    let unassignedPrincipalPaidPaise = 0;
 
-    paymentList.forEach((pay) => {
-        const payDate = normalizeDate(pay.paymentDate || pay.date || pay.createdAt);
-        // Payments recorded with a timestamp after asOfDate are omitted from balance computation
-        if (payDate && payDate.getTime() > asOfMs) {
-            return;
-        }
-
+    // 3. Process chronological valid payments
+    validPayments.forEach((pay) => {
         const amt = round2(pay.amount || pay.paidAmount || 0);
         totalAmountPaidPaise += toPaise(amt);
 
         const hasAllocations = (pay.principalAllocated !== undefined || pay.interestAllocated !== undefined);
-        if (hasAllocations) {
-            const priAlloc = round2(pay.principalAllocated || 0);
-            const intAlloc = round2(pay.interestAllocated || 0);
-            totalPrincipalPaidPaise += toPaise(priAlloc);
-            totalInterestPaidPaise += toPaise(intAlloc);
-        } else {
+
+        // Legacy payment handling: do not automatically split into principal or interest
+        if (!hasAllocations) {
             legacyPaymentsCount++;
+            totalLegacyAmountPaidPaise += toPaise(amt);
+            return;
+        }
+
+        const priAlloc = round2(pay.principalAllocated || 0);
+        const intAlloc = round2(pay.interestAllocated || 0);
+        const priAllocPaise = toPaise(priAlloc);
+        const intAllocPaise = toPaise(intAlloc);
+
+        totalPrincipalPaidPaise += priAllocPaise;
+        totalInterestPaidPaise += intAllocPaise;
+
+        // Tranche allocation
+        if (trancheList.length === 1) {
+            const singleTranche = trancheMap.values().next().value;
+            if (singleTranche) {
+                singleTranche.principalPaidPaise += priAllocPaise;
+            }
+        } else if (trancheList.length > 1) {
+            const targetTrancheId = pay.trancheId || pay.tranche_id || pay.relatedTranche;
+            if (targetTrancheId && trancheMap.has(targetTrancheId)) {
+                trancheMap.get(targetTrancheId).principalPaidPaise += priAllocPaise;
+            } else if (priAllocPaise > 0) {
+                hasUnassignedTranchePayments = true;
+                unassignedTranchePaymentsCount++;
+                unassignedPrincipalPaidPaise += priAllocPaise;
+            }
         }
     });
 
+    // 4. Excess payments calculation (Rule 5)
+    const excessPrincipalPaise = Math.max(0, totalPrincipalPaidPaise - totalOriginalPrincipalPaise);
+    const excessInterestPaise = Math.max(0, totalInterestPaidPaise - toPaise(totalAccruedInterest));
+    const totalExcessPaise = excessPrincipalPaise + excessInterestPaise;
+
+    // 5. Remaining balances: strictly non-negative
     const remainingPrincipalPaise = Math.max(0, totalOriginalPrincipalPaise - totalPrincipalPaidPaise);
     const unpaidInterestPaise = Math.max(0, toPaise(totalAccruedInterest) - totalInterestPaidPaise);
     const totalOutstandingPaise = remainingPrincipalPaise + unpaidInterestPaise;
@@ -420,8 +511,52 @@ export function calculateOutstandingBalances(tranches, payments = [], asOfDate =
     const unpaidInterest = unpaidInterestPaise / 100;
     const totalOutstanding = totalOutstandingPaise / 100;
 
+    const totalExcessPaid = totalExcessPaise / 100;
+    const excessPrincipalPaid = excessPrincipalPaise / 100;
+    const excessInterestPaid = excessInterestPaise / 100;
+
     // Automatic closure: both remaining principal and unpaid interest must equal 0.00
     const isClosed = (remainingPrincipalPaise === 0 && unpaidInterestPaise === 0 && totalOriginalPrincipalPaise > 0);
+
+    // 6. Build tranche breakdown with per-tranche principalPaid & remainingPrincipal
+    const trancheBreakdown = interestData.trancheBreakdown.map((tInfo) => {
+        const tData = trancheMap.get(tInfo.trancheId);
+        let principalPaid = null;
+        let remainingPrincipal = null;
+        let excessPrincipalPaid = 0;
+        let trancheAllocationStatus = "allocated";
+
+        if (trancheList.length === 1) {
+            principalPaid = tData ? tData.principalPaidPaise / 100 : 0;
+            const remPaise = Math.max(0, (tData ? tData.principalPaise : 0) - (tData ? tData.principalPaidPaise : 0));
+            const excessPaise = Math.max(0, (tData ? tData.principalPaidPaise : 0) - (tData ? tData.principalPaise : 0));
+            remainingPrincipal = remPaise / 100;
+            excessPrincipalPaid = excessPaise / 100;
+            trancheAllocationStatus = "single_tranche";
+        } else if (hasUnassignedTranchePayments) {
+            // Cannot safely determine remainingPrincipal without inventing an allocation rule
+            principalPaid = tData ? tData.principalPaidPaise / 100 : 0;
+            remainingPrincipal = null;
+            excessPrincipalPaid = 0;
+            trancheAllocationStatus = "unassigned_payments_present";
+        } else {
+            // Multi-tranche with all principal payments identified by trancheId
+            principalPaid = tData ? tData.principalPaidPaise / 100 : 0;
+            const remPaise = Math.max(0, (tData ? tData.principalPaise : 0) - (tData ? tData.principalPaidPaise : 0));
+            const excessPaise = Math.max(0, (tData ? tData.principalPaidPaise : 0) - (tData ? tData.principalPaise : 0));
+            remainingPrincipal = remPaise / 100;
+            excessPrincipalPaid = excessPaise / 100;
+            trancheAllocationStatus = "allocated";
+        }
+
+        return {
+            ...tInfo,
+            principalPaid,
+            remainingPrincipal,
+            excessPrincipalPaid,
+            trancheAllocationStatus
+        };
+    });
 
     return {
         totalOriginalPrincipal: totalOriginalPrincipalPaise / 100,
@@ -434,11 +569,30 @@ export function calculateOutstandingBalances(tranches, payments = [], asOfDate =
         totalOutstanding,
         isClosed,
         status: isClosed ? "closed" : "active",
+        hasExcessPayment: totalExcessPaise > 0,
+        excessPayment: totalExcessPaid,
+        excessPrincipalPaid,
+        excessInterestPaid,
         asOfDate: normalizedAsOf,
-        trancheBreakdown: interestData.trancheBreakdown,
+        trancheBreakdown,
         paymentCount: paymentList.length,
+        processedPaymentsCount: validPayments.length,
         legacyPaymentsCount,
-        hasUnallocatedPayments: legacyPaymentsCount > 0
+        totalLegacyAmountPaid: totalLegacyAmountPaidPaise / 100,
+        hasUnallocatedPayments: legacyPaymentsCount > 0,
+        legacyPaymentNote: legacyPaymentsCount > 0
+            ? "Legacy payments without explicit principal/interest allocation are preserved in totalAmountPaid and totalLegacyAmountPaid, but are not automatically split into principal or interest."
+            : null,
+        invalidPayments,
+        invalidPaymentCount: invalidPayments.length,
+        hasInvalidPayments: invalidPayments.length > 0,
+        futurePaymentsCount: futurePayments.length,
+        hasUnassignedTranchePayments,
+        unassignedTranchePaymentsCount,
+        unassignedPrincipalPaid: unassignedPrincipalPaidPaise / 100,
+        trancheAllocationLimitation: hasUnassignedTranchePayments
+            ? "Some payments did not identify a specific trancheId. Individual tranche remaining principal cannot be safely determined without an agreed allocation rule."
+            : null
     };
 }
 
@@ -498,8 +652,8 @@ export function calculateDueDateStatus(dueDate, asOfDate = new Date()) {
     }
 
     // Compare calendar dates (midnight to midnight)
-    const dueMidnight = new Date(normalizedDue.getFullYear(), normalizedDue.getMonth(), normalizedDue.getDate());
-    const asOfMidnight = new Date(normalizedAsOf.getFullYear(), normalizedAsOf.getMonth(), normalizedAsOf.getDate());
+    const dueMidnight = toCalendarMidnight(normalizedDue);
+    const asOfMidnight = toCalendarMidnight(normalizedAsOf);
     const diffDays = Math.round((dueMidnight.getTime() - asOfMidnight.getTime()) / MS_PER_DAY);
 
     // Overdue: Due date is in the past
@@ -547,3 +701,14 @@ export function calculateDueDateStatus(dueDate, asOfDate = new Date()) {
         badgeClass: "badge-normal"
     };
 }
+
+export default {
+    round2,
+    toPaise,
+    toCalendarMidnight,
+    normalizeDate,
+    calculateAccruedInterest,
+    validatePaymentAllocation,
+    calculateOutstandingBalances,
+    calculateDueDateStatus
+};
