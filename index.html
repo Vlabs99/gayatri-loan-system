@@ -40,6 +40,25 @@
         
         .error-box { color: #e11d48; background: #fff1f2; padding: 10px; border-radius: 8px; font-size: 13px; margin-bottom: 20px; display: none; border: 1px solid #fee2e2; }
         
+        .register-prompt {
+            margin-top: 24px;
+            padding-top: 20px;
+            border-top: 1px solid var(--border);
+            font-size: 14px;
+            color: #64748b;
+        }
+        .register-link {
+            color: var(--primary);
+            text-decoration: none;
+            font-weight: 600;
+            margin-left: 4px;
+            transition: 0.2s;
+        }
+        .register-link:hover {
+            color: #1d4ed8;
+            text-decoration: underline;
+        }
+
         .footer-info { margin-top: 30px; font-size: 12px; color: #94a3b8; line-height: 1.6; text-align: center; max-width: 400px; }
         .contact-highlight { color: var(--primary); font-weight: 600; }
     </style>
@@ -65,6 +84,10 @@
             </div>
             <button type="submit" class="login-btn" id="loginBtn">Secure Sign In</button>
         </form>
+
+        <div class="register-prompt">
+            New customer? <a href="register.html" class="register-link">Register as Customer</a>
+        </div>
     </div>
 
     <div class="footer-info">
